@@ -13,7 +13,7 @@ class SearchAdsReporter:
   def __init__(self, api):
     self.api = api
 
-  def get_searchterms_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None) -> pd.DataFrame:
+  def get_searchterms_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None, request_overrides: Dict[str, any]={}) -> pd.DataFrame:
     campaigns_report = self.get_campaigns_report(start_date=start_date, end_date=end_date, columns=columns)
     df = pd.DataFrame()
     if campaigns_report.empty:
@@ -32,7 +32,8 @@ class SearchAdsReporter:
             'pagination': {
               'limit': 5000,
             }
-          }
+          },
+          **request_overrides,
         }
       )
       response = self.api.post(endpoint=f'reports/campaigns/{campaign_id}/searchterms', data=body, verbose=self.verbose)
@@ -48,13 +49,13 @@ class SearchAdsReporter:
     df.reset_index(drop=True, inplace=True)
     return df
 
-  def get_keywords_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None) -> pd.DataFrame:
+  def get_keywords_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None, request_overrides: Dict[str, any]={}) -> pd.DataFrame:
     campaigns_report = self.get_campaigns_report(start_date=start_date, end_date=end_date, columns=columns)
     df = pd.DataFrame()
     if campaigns_report.empty:
       return df
     for campaign_id in campaigns_report.campaignId.unique():
-      body = self.report_request_body(start_date, end_date)
+      body = self.report_request_body(start_date, end_date, request_overrides)
       response = self.api.post(endpoint=f'reports/campaigns/{campaign_id}/keywords', data=body, verbose=self.verbose)
 
       report = self._convert_response_to_data_frame(response=response, columns=columns)
@@ -68,13 +69,13 @@ class SearchAdsReporter:
     df.reset_index(drop=True, inplace=True)
     return df
 
-  def get_creative_sets_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None) -> pd.DataFrame:
+  def get_creative_sets_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None, request_overrides: Dict[str, any]={}) -> pd.DataFrame:
     campaigns_report = self.get_campaigns_report(start_date=start_date, end_date=end_date, columns=columns)
     df = pd.DataFrame()
     if campaigns_report.empty:
       return df
     for campaign_id in campaigns_report.campaignId.unique():
-      body = self.report_request_body(start_date, end_date)
+      body = self.report_request_body(start_date, end_date, request_overrides)
       response = self.api.post(endpoint=f'reports/campaigns/{campaign_id}/creativesets', data=body, verbose=self.verbose)
 
       report = self._convert_response_to_data_frame(response=response, columns=columns)
@@ -88,13 +89,13 @@ class SearchAdsReporter:
     df.reset_index(drop=True, inplace=True)
     return df
 
-  def get_adgroups_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None) -> pd.DataFrame:
+  def get_adgroups_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None, request_overrides: Dict[str, any]={}) -> pd.DataFrame:
     campaigns_report = self.get_campaigns_report(start_date=start_date, end_date=end_date, columns=columns)
     df = pd.DataFrame()
     if campaigns_report.empty:
       return df
     for campaign_id in campaigns_report.campaignId.unique():
-      body = self.report_request_body(start_date, end_date)
+      body = self.report_request_body(start_date, end_date, request_overrides)
       response = self.api.post(endpoint=f'reports/campaigns/{campaign_id}/adgroups', data=body, verbose=self.verbose)
 
       adgroup_report = self._convert_response_to_data_frame(response=response, columns=columns)
@@ -108,8 +109,8 @@ class SearchAdsReporter:
     df.reset_index(drop=True, inplace=True)
     return df
 
-  def get_campaigns_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None) -> pd.DataFrame:
-    body = self.report_request_body(start_date, end_date)
+  def get_campaigns_report(self, start_date: datetime, end_date: datetime, columns: Optional[List[str]] = None, request_overrides: Dict[str, any]={}) -> pd.DataFrame:
+    body = self.report_request_body(start_date, end_date, request_overrides)
     response = self.api.post(endpoint='reports/campaigns', data=body, verbose=self.verbose)
     return self._convert_response_to_data_frame(response=response, columns=columns)
   
@@ -134,7 +135,45 @@ class SearchAdsReporter:
     body.update(body_overrides)
     return body
 
-  def _convert_response_to_data_frame(self, response: Dict[str, any], columns: List[str]) -> pd.DataFrame:
+  def get_entity_report(self, granularity: str, ids: Optional[List[str]]=None, parent_ids: Optional[List[str]]=None, columns: Optional[List[str]]=None) -> pd.DataFrame:
+    if granularity == 'org':
+      endpoints = ['acls']
+    elif granularity == 'campaign':
+      endpoints = [f'campaigns']
+    elif granularity == 'adGroup':
+      if parent_ids is None:
+        parent_report = self.get_entity_report(
+          granularity='campaign',
+          columns=['id']
+        )
+        parent_ids = list(parent_report.id.unique()) if not parent_report.empty else []
+      endpoints = [
+        f'campaigns/{i}/adgroups'
+        for i in parent_ids
+      ]
+
+    report = pd.DataFrame()
+    for endpoint in endpoints:
+      response = self.api.get(
+        endpoint=endpoint,
+        query_parameters={
+          'limit': '1000',
+        }
+      )
+      df = self._convert_response_to_data_frame(
+        response=response,
+        columns=columns,
+        is_entity_response=True
+      )
+      report = report.append(df)
+    
+    if ids is not None and not report.empty:
+      report = report.loc[report.id.isin(ids)]
+
+    report.reset_index(drop=True, inplace=True)
+    return report
+
+  def _convert_response_to_data_frame(self, response: Dict[str, any], columns: List[str], is_entity_response: bool=False) -> pd.DataFrame:
     pagination = response['pagination']
     
     if pagination is not None:
@@ -146,6 +185,9 @@ class SearchAdsReporter:
         raise ValueError('Apple Search Ads reporting paginiation is not supported', error_string)
 
     try:
+      if is_entity_response:
+        reporting_data = [{'granularity': [r]} for r in response['data']]
+      else:
         reporting_data = response['data']['reportingDataResponse']['row']
     except:
         raise ValueError('Unexpected response', response) # ['data']['error']['errors'])

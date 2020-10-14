@@ -1,23 +1,25 @@
 import requests
 from typing import Optional, Dict, List
+from .context import AppleSearchAdsCertificate
 
 class SearchAdsAPI:
   api_version: str
   certificates: Dict[str, str]
   org_id: Optional[int]
 
-  def __init__(self, certificates: Dict[str, str], org_id: Optional[int]=None, api_version: str='v2'):
+  def __init__(self, certificates: Dict[str, str], org_id: Optional[int]=None, api_version: str='v3'):
     self.api_version = api_version
     self.certificates = certificates
     self.org_id = org_id
 
-  def _api_call(self, method, endpoint: str, json_data={}, verbose: bool=False):
+  def _api_call(self, method: any, endpoint: str, json_data: Dict[str, any]={}, verbose: bool=False, query_parameters: Dict[str, any]={}):
     call_kwargs = {
       'cert': (
         self.certificates['pem'],
         self.certificates['key'],
       ),
       'headers': {},
+      **({'params': query_parameters} if query_parameters else {}),
     }
 
     if json_data:
@@ -53,11 +55,19 @@ class SearchAdsAPI:
     
     return names[0]['orgName']
 
-  def get(self, endpoint, verbose=False):
+  def get_org_ids(self) -> List[int]:
+    response = self.get('acls')
+    if response['data'] is None:
+      raise ValueError('acls response data is None', response)
+    org_ids = [acl['orgId'] for acl in response['data']]
+    return org_ids
+
+  def get(self, endpoint, verbose=False, query_parameters: Dict[str, any]=[]):
     return self._api_call(
       method=requests.get,
       endpoint=endpoint,
-      verbose=verbose
+      verbose=verbose,
+      query_parameters=query_parameters
     )
 
   def put(self, endpoint, data={}, verbose=False):
@@ -79,3 +89,18 @@ class SearchAdsAPI:
   def get_campaigns(self) -> List[Dict[str, any]]:
     response = self.post(endpoint='campaigns/find')
     return response
+
+class AppleSearchAdsAPI(SearchAdsAPI):
+  certificate: AppleSearchAdsCertificate
+
+  def __init__(self, **kwargs):
+    self.certificate = AppleSearchAdsCertificate(certificate=kwargs)
+    self.certificate.connect()
+    super().__init__(
+      certificates=self.certificate.connection,
+      org_id=self.certificate.org_id
+    )
+
+  def __del__(self):
+    if self.certificate.connection is not None:
+      self.certificate.disconnect()

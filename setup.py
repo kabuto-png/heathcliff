@@ -11,5 +11,8 @@ setup(name='heathcliff',
       install_requires=[
         'pandas',
         'requests',
+        'tqdm',
+        'pytest',
+        'python-decouple',
       ],
       zip_safe=False)
